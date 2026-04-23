@@ -21,7 +21,7 @@ const {
   isMinorOrPatchBump,
   isDevDependency,
   getInstalledVersion,
-  sendWebhook,
+  sendSlackMessage,
 } = require('./utils');
 
 const VALID_SEVERITIES = ['low', 'medium', 'high', 'critical'];
@@ -36,8 +36,7 @@ async function run() {
   // ── Inputs ────────────────────────────────────────────────────────────────
   const token = core.getInput('github-token', { required: true });
   const minSeverity = core.getInput('min-severity', { required: true }).toLowerCase().trim();
-  const webhookUrl = core.getInput('webhook-url').trim();
-  const webhookSecret = core.getInput('webhook-secret');
+  const slackWebhookUrl = core.getInput('slack-webhook-url').trim();
   const enableAutoMerge = core.getInput('enable-auto-merge').trim().toLowerCase() !== 'false';
 
   if (!VALID_SEVERITIES.includes(minSeverity)) {
@@ -97,7 +96,7 @@ async function run() {
   // ── Step 3: No fix available ──────────────────────────────────────────────
   if (!fixedVersion) {
     core.warning(`No patched version available for "${packageName}". Escalating for manual review.`);
-    await maybeWebhook(webhookUrl, webhookSecret, {
+    await maybeSlack(slackWebhookUrl, {
       event: 'no-fix-available',
       alert_number: alertNumber,
       package: packageName,
@@ -149,7 +148,7 @@ async function run() {
         `"${packageName}" is a minor/patch bump but enable-auto-merge is false. ` +
         'Sending webhook notification.',
       );
-      await maybeWebhook(webhookUrl, webhookSecret, {
+      await maybeSlack(slackWebhookUrl, {
         event: 'minor-bump-notify',
         alert_number: alertNumber,
         package: packageName,
@@ -171,7 +170,7 @@ async function run() {
   } else {
     // Major bump — human needs to evaluate breaking changes.
     core.info(`Major bump required for "${packageName}". Sending webhook for manual investigation.`);
-    await maybeWebhook(webhookUrl, webhookSecret, {
+    await maybeSlack(slackWebhookUrl, {
       event: 'major-bump-required',
       alert_number: alertNumber,
       package: packageName,
@@ -207,18 +206,18 @@ async function dismissAlert(octokit, owner, repo, alertNumber, reason, comment) 
   core.info(`Alert #${alertNumber} dismissed (reason: ${reason}).`);
 }
 
-async function maybeWebhook(url, secret, payload) {
+async function maybeSlack(url, payload) {
   if (!url) {
-    core.warning('No webhook-url configured — skipping webhook notification.');
+    core.warning('No slack-webhook-url configured — skipping Slack notification.');
     return;
   }
   try {
-    await sendWebhook(url, secret, payload);
-    core.info(`Webhook dispatched for event "${payload.event}".`);
+    await sendSlackMessage(url, payload);
+    core.info(`Slack message sent for event "${payload.event}".`);
   } catch (err) {
-    // Webhook failure is non-fatal: log and continue so the action doesn't
-    // block the pipeline due to a downstream notification issue.
-    core.error(`Webhook dispatch failed: ${err.message}`);
+    // Slack failure is non-fatal: log and continue so the action doesn't
+    // block the pipeline due to a notification issue.
+    core.error(`Slack notification failed: ${err.message}`);
   }
 }
 

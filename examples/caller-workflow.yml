@@ -3,20 +3,19 @@
 # in each repository that should use dependabot-manager.
 #
 # Required setup steps for each consuming repo:
-#   1. Add the PAT / App token as a secret named DEPENDABOT_MANAGER_TOKEN
-#      (or use secrets:inherit with a properly-scoped org-level secret).
+#   1. Add the PAT / App token as a secret named GH_ACTIONS_SYNC_TOKEN.
 #      The token needs:
 #        - security_events scope  (to dismiss Dependabot alerts)
 #        - pull_requests scope    (to approve PRs and enable auto-merge)
 #        - contents:read          (to read package manifests / lockfiles)
 #
-#   2. (Optional) Add SECURITY_WEBHOOK_URL as a repository variable (vars.*).
+#   2. Add SECURITY_ALERT_WEBHOOK as a repository or org-level secret.
+#      This is the Slack incoming webhook URL for your security channel.
 #
-#   3. (Optional) Add WEBHOOK_SECRET as a repository secret.
+#   3. In repo Settings → General → "Allow auto-merge" must be ENABLED
+#      (only needed if you set enable-auto-merge: 'true').
 #
-#   4. In repo Settings → General → "Allow auto-merge" must be ENABLED.
-#
-#   5. Configure branch protection on your default branch to require at least
+#   4. Configure branch protection on your default branch to require at least
 #      one status check — this is what tells GitHub when it's safe to merge.
 ##############################################################################
 name: Dependabot Manager
@@ -44,26 +43,24 @@ jobs:
   handle-alert:
     if: github.event_name == 'dependabot_alert'
     uses: YOUR_ORG/dependabot-manager/.github/workflows/handle-alert.yml@v1
-    # Forward all org/repo secrets so the reusable workflow can use them.
-    secrets: inherit
+    secrets:
+      token: ${{ secrets.GH_ACTIONS_SYNC_TOKEN }}
+      slack-webhook-url: ${{ secrets.SECURITY_ALERT_WEBHOOK }}
     with:
       # Dismiss anything below this severity; action above it.
       # Allowed: low | medium | high | critical
       min-severity: medium
 
-      # Optional: URL to receive webhook POSTs for major bumps / no-fix alerts
-      # and for minor bumps when enable-auto-merge is false.
-      webhook-url: ${{ vars.SECURITY_WEBHOOK_URL }}
-
-      # Set to "false" to disable auto-merge and receive webhook notifications
-      # for minor bumps instead. Defaults to "true".
+      # Set to "true" to approve + auto-merge minor/patch bump PRs.
+      # When false, a Slack notification is sent instead.
       enable-auto-merge: 'false'
 
   # ── Auto-merge handler ──────────────────────────────────────────────────────
   handle-automerge:
     if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]'
     uses: YOUR_ORG/dependabot-manager/.github/workflows/handle-automerge.yml@v1
-    secrets: inherit
+    secrets:
+      token: ${{ secrets.GH_ACTIONS_SYNC_TOKEN }}
     with:
       min-severity: medium
       # merge | squash | rebase  — must match your branch protection setting

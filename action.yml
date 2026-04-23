@@ -32,18 +32,11 @@ inputs:
     required: false
     default: 'medium'
 
-  webhook-url:
+  slack-webhook-url:
     description: >
-      HTTPS endpoint to POST notifications to when a major bump or no-fix
-      situation requires manual investigation.
-    required: false
-    default: ''
-
-  webhook-secret:
-    description: >
-      HMAC-SHA256 secret used to sign webhook payloads. The signature is sent
-      in the X-Hub-Signature-256 header (same format as GitHub webhooks).
-      Store this as a repository or organisation secret — never hardcode it.
+      Slack incoming webhook URL. When set, Slack Block Kit messages are sent
+      for minor bumps (when auto-merge is off), major bumps, and no-fix alerts.
+      Always store this as a GitHub Secret — never hardcode it.
     required: false
     default: ''
 

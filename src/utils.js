@@ -180,31 +180,131 @@ function escapeRegex(str) {
 }
 
 // ---------------------------------------------------------------------------
-// Webhook dispatch
+// Slack notification
 // ---------------------------------------------------------------------------
 
-/**
- * POSTs a JSON payload to a webhook URL.
- * If a secret is provided the body is HMAC-SHA256 signed and the signature
- * is sent in the X-Hub-Signature-256 header (same convention as GitHub webhooks).
- */
-async function sendWebhook(url, secret, payload) {
-  const body = JSON.stringify(payload);
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'dependabot-manager-action/1.0',
-  };
+const SEVERITY_EMOJI = {
+  critical: ':rotating_light:',
+  high: ':warning:',
+  medium: ':large_yellow_circle:',
+  low: ':information_source:',
+};
 
-  if (secret) {
-    const { createHmac } = await import('node:crypto');
-    const sig = createHmac('sha256', secret).update(body).digest('hex');
-    headers['X-Hub-Signature-256'] = `sha256=${sig}`;
+const EVENT_HEADER = {
+  'minor-bump-notify':   ':bell: Dependency update available',
+  'major-bump-required': ':rotating_light: Major bump required \u2014 manual review',
+  'no-fix-available':    ':sos: No fix available \u2014 monitor required',
+};
+
+const EVENT_CONTEXT = {
+  'minor-bump-notify':   'Review the Dependabot PR and merge when ready.',
+  'major-bump-required': 'Breaking changes likely. Manual investigation required before upgrading.',
+  'no-fix-available':    'No patch exists yet. Monitor the advisory for updates.',
+};
+
+/**
+ * Builds a Slack Block Kit payload for a Dependabot alert event.
+ */
+function buildSlackBlocks(payload) {
+  const {
+    event,
+    package: pkg,
+    ecosystem,
+    severity,
+    summary,
+    installed_version: installedVersion,
+    fixed_version: fixedVersion,
+    vulnerable_range: vulnerableRange,
+    alert_number: alertNumber,
+    alert_url: alertUrl,
+    repository,
+  } = payload;
+
+  const severityEmoji = SEVERITY_EMOJI[severity] || ':warning:';
+  const header = EVENT_HEADER[event] || ':bell: Dependabot alert';
+  const contextMsg = EVENT_CONTEXT[event];
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: header, emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Package*\n\`${pkg}\` (${ecosystem})` },
+        { type: 'mrkdwn', text: `*Severity*\n${severityEmoji} ${severity}` },
+        { type: 'mrkdwn', text: `*Repository*\n\`${repository}\`` },
+        { type: 'mrkdwn', text: `*Alert*\n<${alertUrl}|#${alertNumber}>` },
+      ],
+    },
+  ];
+
+  // Version bump details
+  if (installedVersion && fixedVersion) {
+    const bumpLabel = event === 'major-bump-required' ? '*MAJOR*' : 'minor/patch';
+    blocks.push({
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Current version*\n\`${installedVersion}\`` },
+        { type: 'mrkdwn', text: `*Fixed version*\n\`${fixedVersion}\` (${bumpLabel})` },
+      ],
+    });
   }
 
-  const response = await fetch(url, { method: 'POST', headers, body });
+  // Vulnerable range (shown when no installed version is resolved)
+  if (vulnerableRange && !installedVersion) {
+    blocks.push({
+      type: 'section',
+      fields: [{ type: 'mrkdwn', text: `*Vulnerable range*\n\`${vulnerableRange}\`` }],
+    });
+  }
+
+  // Advisory summary
+  if (summary) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Advisory*\n${summary}` },
+    });
+  }
+
+  blocks.push({ type: 'divider' });
+
+  if (contextMsg) {
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: contextMsg }],
+    });
+  }
+
+  blocks.push({
+    type: 'actions',
+    elements: [
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'View Alert', emoji: true },
+        url: alertUrl,
+        style: event === 'minor-bump-notify' ? 'primary' : 'danger',
+      },
+    ],
+  });
+
+  return blocks;
+}
+
+/**
+ * POSTs a Slack Block Kit message to an incoming webhook URL.
+ */
+async function sendSlackMessage(url, payload) {
+  const body = JSON.stringify({ blocks: buildSlackBlocks(payload) });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(`Webhook POST failed: ${response.status} ${response.statusText} – ${text}`);
+    throw new Error(`Slack webhook failed: ${response.status} ${response.statusText} – ${text}`);
   }
 }
 
@@ -214,5 +314,5 @@ module.exports = {
   isMinorOrPatchBump,
   isDevDependency,
   getInstalledVersion,
-  sendWebhook,
+  sendSlackMessage,
 };

@@ -6,15 +6,16 @@
 #   jobs:
 #     dependabot-alert:
 #       uses: YOUR_ORG/dependabot-manager/.github/workflows/handle-alert.yml@v1
-#       secrets: inherit
+#       secrets:
+#         token: ${{ secrets.GH_ACTIONS_SYNC_TOKEN }}
+#         slack-webhook-url: ${{ secrets.SECURITY_ALERT_WEBHOOK }}
 #       with:
 #         min-severity: medium
-#         webhook-url: ${{ vars.SECURITY_WEBHOOK_URL }}
 #
 # Required secrets in the calling repo:
-#   DEPENDABOT_MANAGER_TOKEN – PAT or GitHub App token with:
-#       security-events:write, pull-requests:write, contents:read
-#   WEBHOOK_SECRET (optional) – HMAC secret for signed webhook payloads
+#   GH_ACTIONS_SYNC_TOKEN    – PAT or GitHub App token with:
+#                              security-events:write, pull-requests:write, contents:read
+#   SECURITY_ALERT_WEBHOOK   – Slack incoming webhook URL
 #
 ##############################################################################
 name: Dependabot Alert Handler (reusable)
@@ -27,12 +28,6 @@ on:
         type: string
         required: false
         default: 'medium'
-
-      webhook-url:
-        description: 'Webhook endpoint for escalation notifications'
-        type: string
-        required: false
-        default: ''
 
       enable-auto-merge:
         description: >
@@ -53,11 +48,9 @@ on:
       token:
         description: >
           Token with security-events:write, pull-requests:write, contents:read.
-          Defaults to the built-in GITHUB_TOKEN when secrets:inherit is used
-          and the caller grants the required permissions.
         required: false
-      webhook-secret:
-        description: 'HMAC secret for signing webhook payloads'
+      slack-webhook-url:
+        description: 'Slack incoming webhook URL for alert notifications'
         required: false
 
     outputs:
@@ -104,6 +97,5 @@ jobs:
           github-token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
           mode: alert
           min-severity: ${{ inputs.min-severity }}
-          webhook-url: ${{ inputs.webhook-url }}
-          webhook-secret: ${{ secrets.webhook-secret }}
+          slack-webhook-url: ${{ secrets.slack-webhook-url }}
           enable-auto-merge: ${{ inputs.enable-auto-merge }}
