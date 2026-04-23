@@ -43,12 +43,6 @@ on:
         required: false
         default: 'false'
 
-      action-ref:
-        description: 'Git ref of dependabot-manager to use (tag, branch, or SHA)'
-        type: string
-        required: false
-        default: 'v1'
-
     secrets:
       token:
         description: >
@@ -73,8 +67,9 @@ jobs:
     runs-on: ubuntu-latest
 
     # Only run on PRs opened (or re-synced) by Dependabot.
+    # NOTE: github.event_name inside a workflow_call is always 'workflow_call',
+    # not the original event type — so we check github.event.action directly.
     if: >
-      github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize') &&
       github.actor == 'dependabot[bot]'
 
@@ -82,11 +77,18 @@ jobs:
       action-taken: ${{ steps.manager.outputs.action-taken }}
 
     steps:
+      - name: Resolve action checkout ref
+        id: ref
+        shell: bash
+        run: |
+          REF="${{ github.workflow_ref }}"
+          echo "value=${REF##*@}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout dependabot-manager action
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/dependabot-manager
-          ref: ${{ inputs.action-ref }}
+          ref: ${{ steps.ref.outputs.value }}
           token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
           path: .dependabot-manager
           persist-credentials: false
