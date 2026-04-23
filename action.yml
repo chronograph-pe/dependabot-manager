@@ -1,0 +1,115 @@
+name: 'Dependabot Manager'
+description: >
+  Intelligently manages Dependabot alerts: auto-dismisses low-severity and
+  dev-dependency alerts, enables PR auto-merge for minor/patch bumps, and
+  sends webhook notifications for major bumps that require manual investigation.
+author: 'your-org'
+
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  github-token:
+    description: >
+      GitHub token with the following permissions:
+        - security-events: write  (to dismiss Dependabot alerts)
+        - pull-requests: write    (to approve PRs and enable auto-merge)
+        - contents: read          (to read manifests / lockfiles)
+    required: true
+
+  mode:
+    description: >
+      Operation mode.
+        "alert"     – process a dependabot_alert event (dismiss or webhook)
+        "automerge" – process a pull_request event from dependabot[bot]
+    required: true
+
+  min-severity:
+    description: >
+      Minimum alert severity to act on. Alerts below this threshold are
+      automatically dismissed. Allowed values: low | medium | high | critical
+    required: false
+    default: 'medium'
+
+  webhook-url:
+    description: >
+      HTTPS endpoint to POST notifications to when a major bump or no-fix
+      situation requires manual investigation.
+    required: false
+    default: ''
+
+  webhook-secret:
+    description: >
+      HMAC-SHA256 secret used to sign webhook payloads. The signature is sent
+      in the X-Hub-Signature-256 header (same format as GitHub webhooks).
+      Store this as a repository or organisation secret — never hardcode it.
+    required: false
+    default: ''
+
+  merge-method:
+    description: >
+      Merge method to use when auto-merging Dependabot PRs.
+      Allowed values: merge | squash | rebase
+    required: false
+    default: 'squash'
+
+  enable-auto-merge:
+    description: >
+      Whether to approve the Dependabot PR and enable auto-merge for
+      qualifying minor/patch bumps.
+        "true"  – approve + enable auto-merge (default)
+        "false" – skip auto-merge; the alert handler will send a webhook
+                  notification instead so the team is still informed
+    required: false
+    default: 'false'
+
+outputs:
+  action-taken:
+    description: >
+      Short identifier describing what the action did. Possible values:
+        dismissed-low-severity    – alert dismissed, below min-severity
+        dismissed-dev-dependency  – alert dismissed, development dep
+        webhook-no-fix            – webhook sent, no patched version available
+        webhook-major-bump        – webhook sent, major version bump required
+        webhook-minor-bump        – webhook sent, minor bump but auto-merge disabled
+        queued-for-auto-merge     – minor/patch bump, PR auto-merge will be set
+        auto-merge-enabled        – PR approved and auto-merge enabled
+        skipped-auto-merge-disabled – automerge mode but enable-auto-merge=false
+        skipped-*                 – various other skip conditions in automerge mode
+    value: ${{ steps.run.outputs.action-taken }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        # Cache keyed on package-lock.json; omit safely if lockfile absent.
+        cache: 'npm'
+        cache-dependency-path: '${{ github.action_path }}/package-lock.json'
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm install --omit=dev --no-audit --no-fund --prefer-offline
+
+    - name: Run dependabot-manager
+      id: run
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        # All action inputs are already available as INPUT_* env vars.
+        # We only need to explicitly forward the mode so the shell script
+        # can branch without calling @actions/core.
+        DM_MODE: ${{ inputs.mode }}
+      run: |
+        case "$DM_MODE" in
+          alert)     node src/handle-alert.js ;;
+          automerge) node src/handle-automerge.js ;;
+          *)
+            echo "::error::Invalid mode \"$DM_MODE\". Must be \"alert\" or \"automerge\"."
+            exit 1
+            ;;
+        esac
