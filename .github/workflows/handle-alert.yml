@@ -1,0 +1,109 @@
+##############################################################################
+# Reusable workflow – Dependabot Alert Handler
+#
+# Consumers call this from their own repository workflow:
+#
+#   jobs:
+#     dependabot-alert:
+#       uses: YOUR_ORG/dependabot-manager/.github/workflows/handle-alert.yml@v1
+#       secrets: inherit
+#       with:
+#         min-severity: medium
+#         webhook-url: ${{ vars.SECURITY_WEBHOOK_URL }}
+#
+# Required secrets in the calling repo:
+#   DEPENDABOT_MANAGER_TOKEN – PAT or GitHub App token with:
+#       security-events:write, pull-requests:write, contents:read
+#   WEBHOOK_SECRET (optional) – HMAC secret for signed webhook payloads
+#
+##############################################################################
+name: Dependabot Alert Handler (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      min-severity:
+        description: 'Minimum alert severity to act on (low | medium | high | critical)'
+        type: string
+        required: false
+        default: 'medium'
+
+      webhook-url:
+        description: 'Webhook endpoint for escalation notifications'
+        type: string
+        required: false
+        default: ''
+
+      enable-auto-merge:
+        description: >
+          Set to "true" to approve Dependabot PRs and enable auto-merge for
+          minor/patch bumps. Defaults to "false" — a webhook notification is
+          sent instead so the team reviews before merging.
+        type: string
+        required: false
+        default: 'false'
+
+      action-ref:
+        description: 'Git ref of dependabot-manager to use (tag, branch, or SHA)'
+        type: string
+        required: false
+        default: 'v1'
+
+    secrets:
+      token:
+        description: >
+          Token with security-events:write, pull-requests:write, contents:read.
+          Defaults to the built-in GITHUB_TOKEN when secrets:inherit is used
+          and the caller grants the required permissions.
+        required: false
+      webhook-secret:
+        description: 'HMAC secret for signing webhook payloads'
+        required: false
+
+    outputs:
+      action-taken:
+        description: 'What the action did (see action.yml for possible values)'
+        value: ${{ jobs.process-alert.outputs.action-taken }}
+
+# Permissions required by this workflow.
+# When called via workflow_call the effective permissions are the intersection
+# of what the caller grants and what is declared here.
+permissions:
+  contents: read
+  security-events: write   # dismiss Dependabot alerts
+  pull-requests: write     # approve PRs / enable auto-merge
+
+jobs:
+  process-alert:
+    name: Process Dependabot alert
+    runs-on: ubuntu-latest
+
+    # Only fire on newly-created or re-introduced alerts.
+    if: >
+      github.event_name == 'dependabot_alert' &&
+      (github.event.action == 'created' || github.event.action == 'reintroduced')
+
+    outputs:
+      action-taken: ${{ steps.manager.outputs.action-taken }}
+
+    steps:
+      - name: Checkout dependabot-manager action
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/dependabot-manager
+          ref: ${{ inputs.action-ref }}
+          # Use the caller-supplied token (or GITHUB_TOKEN via secrets:inherit)
+          token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          path: .dependabot-manager
+          persist-credentials: false
+
+      - name: Run dependabot-manager (alert mode)
+        id: manager
+        uses: ./.dependabot-manager
+        with:
+          github-token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          mode: alert
+          min-severity: ${{ inputs.min-severity }}
+          webhook-url: ${{ inputs.webhook-url }}
+          webhook-secret: ${{ secrets.webhook-secret }}
+          enable-auto-merge: ${{ inputs.enable-auto-merge }}

@@ -1,0 +1,102 @@
+##############################################################################
+# Reusable workflow – Dependabot PR Auto-merge Handler
+#
+# Consumers call this from their own repository workflow:
+#
+#   jobs:
+#     dependabot-automerge:
+#       uses: YOUR_ORG/dependabot-manager/.github/workflows/handle-automerge.yml@v1
+#       secrets: inherit
+#       with:
+#         min-severity: medium
+#         merge-method: squash
+#
+# Prerequisites in the target repo:
+#   1. "Allow auto-merge" must be enabled in Settings → General.
+#   2. Branch protection rules must require status checks so GitHub knows
+#      when it is safe to merge.
+#   3. The token used must have pull-requests:write permission.
+#
+##############################################################################
+name: Dependabot PR Auto-merge Handler (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      min-severity:
+        description: 'Minimum alert severity that qualifies for auto-merge'
+        type: string
+        required: false
+        default: 'medium'
+
+      merge-method:
+        description: 'Merge method (merge | squash | rebase)'
+        type: string
+        required: false
+        default: 'squash'
+
+      enable-auto-merge:
+        description: >
+          Set to "true" to approve + auto-merge qualifying Dependabot PRs.
+          Defaults to "false". Should match the value passed to handle-alert.yml.
+        type: string
+        required: false
+        default: 'false'
+
+      action-ref:
+        description: 'Git ref of dependabot-manager to use (tag, branch, or SHA)'
+        type: string
+        required: false
+        default: 'v1'
+
+    secrets:
+      token:
+        description: >
+          Token with pull-requests:write, contents:read, security-events:read.
+          Tip: use a dedicated bot token or GitHub App token to avoid the
+          GitHub restriction that prevents a user from approving their own PRs.
+        required: false
+
+    outputs:
+      action-taken:
+        description: 'What the action did (see action.yml for possible values)'
+        value: ${{ jobs.process-pr.outputs.action-taken }}
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: read   # read Dependabot alerts to verify severity / scope
+
+jobs:
+  process-pr:
+    name: Enable auto-merge on Dependabot PR
+    runs-on: ubuntu-latest
+
+    # Only run on PRs opened (or re-synced) by Dependabot.
+    if: >
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize') &&
+      github.actor == 'dependabot[bot]'
+
+    outputs:
+      action-taken: ${{ steps.manager.outputs.action-taken }}
+
+    steps:
+      - name: Checkout dependabot-manager action
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/dependabot-manager
+          ref: ${{ inputs.action-ref }}
+          token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          path: .dependabot-manager
+          persist-credentials: false
+
+      - name: Run dependabot-manager (automerge mode)
+        id: manager
+        uses: ./.dependabot-manager
+        with:
+          github-token: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          mode: automerge
+          min-severity: ${{ inputs.min-severity }}
+          merge-method: ${{ inputs.merge-method }}
+          enable-auto-merge: ${{ inputs.enable-auto-merge }}
